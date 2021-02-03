@@ -1,6 +1,6 @@
 """ Use Python 3.7 """
 
-import models.vk.tools as tools
+import models.vk.utils as utils
 
 
 VK_API_VERSION = 5.96
@@ -28,7 +28,7 @@ class AudioSaversParser:
             params.update({'access_token': self.token, 'v': VK_API_VERSION})
         else:
             params = {'access_token': self.token, 'v': VK_API_VERSION}
-        return tools.get_api_response(url=url, data=params, rucaptcha_key=self.rucaptcha_key, proxy=self.proxy)
+        return utils.get_api_response(url=url, data=params, rucaptcha_key=self.rucaptcha_key, proxy=self.proxy)
 
     def get_by_artist_url(self, artist_card_url: str, count_only: bool):
         audios = []
@@ -41,12 +41,12 @@ class AudioSaversParser:
             audios.extend(self._search_audios(artist_name, performer_only=1))
 
         if audios:
-            audios = tools.clean_audio_repeats(audios)
+            audios = utils.clean_audio_repeats(audios)
             return self._iter_get_audios_savers(audios, count_only)
 
     def get_by_track_name(self, track_name: str, count_only: bool):
         search_results = self._search_audios(track_name, performer_only=0)
-        audios = tools.match_search_results(search_results, track_name)
+        audios = utils.match_search_results(search_results, track_name)
         if audios:
             return self._iter_get_audios_savers(audios, count_only)
 
@@ -64,7 +64,7 @@ class AudioSaversParser:
     def get_by_playlist(self, playlist_url, count_only):
         audios = []
 
-        playlist_params = tools.pars_playlist_url(playlist_url)
+        playlist_params = utils.pars_playlist_url(playlist_url)
         if playlist_params:
             audios.extend(self._offsets_get_audios_from_list(playlist_params))
 
@@ -80,6 +80,21 @@ class AudioSaversParser:
         audios = self._get_block_audios(NEW_RELEASES_BLOCK_ID)
         if audios:
             return self._iter_get_audios_savers(audios, count_only)
+
+    def get_by_newsfeed(self, q, count_only):
+        posts = self._get_newsfeed_posts(q)
+        audios = utils.iter_get_audios_from_posts(posts)
+        audios = utils.match_search_results(audios, q)
+        if audios:
+            return self._iter_get_audios_savers(audios, count_only)
+
+    def get_by_post(self, post_url, count_only):
+        post_id = utils.pars_post_id_from_post_url(post_url)
+        if post_id:
+            post = self._get_post(post_id)
+            audios = utils.get_audios_from_post(post)
+            if audios:
+                return self._iter_get_audios_savers(audios, count_only)
 
     def _get_block_audios(self, block_id):
         audios = []
@@ -130,7 +145,7 @@ class AudioSaversParser:
         for n, audio in enumerate(audios):
             audio_savers = self._get_audio_savers(audio['owner_id'], audio['id'])
             if isinstance(audio_savers, list):
-                audios_with_savers.append(tools.zip_audio_obj_and_savers(audio, audio_savers))
+                audios_with_savers.append(utils.zip_audio_obj_and_savers(audio, audio_savers))
             print(f'{n+1} / {len(audios)}')
         return audios_with_savers
 
@@ -142,10 +157,10 @@ class AudioSaversParser:
 
         audios_with_savers_count = []
         for batch in audio_batches:
-            code = tools.code_for_get_savers_count(batch)
+            code = utils.code_for_get_savers_count(batch)
             execute_resp = self._api_response('execute', {'code': code})
             if execute_resp:
-                audios_with_savers_count.extend(tools.iter_zip_audio_obj_and_savers(batch, execute_resp))
+                audios_with_savers_count.extend(utils.iter_zip_audio_obj_and_savers(batch, execute_resp))
 
         return audios_with_savers_count
 
@@ -164,10 +179,10 @@ class AudioSaversParser:
 
         savers = []
         for offsets_batch in offsets_batches:
-            code = tools.code_for_iter_get_audio_savers(owner_id, audio_id, offsets_batch)
+            code = utils.code_for_iter_get_audio_savers(owner_id, audio_id, offsets_batch)
             execute_resp = self._api_response('execute', {'code': code})
             if execute_resp:
-                savers.extend(tools.unpack_execute_response_with_audio_savers(execute_resp))
+                savers.extend(utils.unpack_execute_response_with_audio_savers(execute_resp))
 
         return savers
 
@@ -200,3 +215,19 @@ class AudioSaversParser:
             resp = self._api_response('groups.getById', {'group_id': group_id, 'fields': 'counters'})
             if resp and resp[0]['counters']['audios']:
                 return resp[0]['id']
+
+    def _get_newsfeed_posts(self, q):
+        posts = []
+        next_from = None
+        for _ in range(4):
+            resp = self._api_response('newsfeed.search', {'q': q, 'attach': 3, 'count': 200, 'start_from': next_from})
+            if resp and 'items' in resp.keys():
+                posts.extend(resp['items'])
+            if resp and 'next_from' in resp.keys():
+                next_from = resp['next_from']
+        return posts
+
+    def _get_post(self, post_id):
+        resp = self._api_response('wall.getById', {'posts': post_id})
+        if resp:
+            return resp[0]

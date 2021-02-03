@@ -82,19 +82,25 @@ def pars_playlist_url(playlist_url):
         return {'owner_id': owner_id, 'playlist_id': playlist_id, 'access_key': access_key}
 
 
-def match_search_results(search_results, track_name):
+def match_search_results(search_results, q):
     """
     Возвращает лист объектов аудиозаписей, полученных из поиска, которые сходятся с поисковым запросом
 
     :param search_results:      list, лист объектов аудиозаписей ВК
-    :param track_name:          str, поисковый запрос в формате "artist - title"
+    :param q:                   str, поисковый запрос в формате "artist - title" или просто "q"
     :return:                    list, лист объектов аудиозаписей ВК
     """
-    artist, title = track_name.split(' - ')
+    artist, title = q, None
+    if ' - ' in q:
+        artist, title = q.split(' - ')
+
     matched_audios = []
     for audio in search_results:
         full_audio_title = f"{audio['title']} ({audio['subtitle']})" if 'subtitle' in audio.keys() else audio['title']
-        match_check_list = [artist.lower() in audio['artist'].lower(), title.lower() in full_audio_title.lower()]
+        if title:
+            match_check_list = [artist.lower() in audio['artist'].lower(), title.lower() in full_audio_title.lower()]
+        else:
+            match_check_list = [artist.lower() in f"{audio['artist'].lower()} - {full_audio_title.lower()}"]
         if all(match_check_list):
             matched_audios.append(audio)
     return matched_audios
@@ -137,6 +143,8 @@ def zip_audio_obj_and_savers(audio, savers):
     }
     if 'chart_position' in audio.keys():
         audio_obj.update({'chart_position': audio['chart_position']})
+    if 'post_owner_id' in audio.keys():
+        audio_obj.update({'post_owner_id': audio['post_owner_id'], 'post_id': audio['post_id']})
     if isinstance(savers, list):
         audio_obj.update({'savers': savers, 'savers_count': len(savers)})
     elif isinstance(savers, int):
@@ -214,3 +222,32 @@ def unpack_execute_response_with_audio_savers(execute_response):
     for x in execute_response:
         savers.extend(x['items'])
     return savers
+
+
+def iter_get_audios_from_posts(posts):
+    audios = []
+    for post in posts:
+        audios.extend(get_audios_from_post(post))
+    return audios
+
+
+def get_audios_from_post(post):
+    if 'attachments' in post.keys():
+        audios = [x['audio'] for x in post['attachments'] if x['type'] == 'audio']
+        for audio in audios:
+            audio.update({'post_owner_id': post['owner_id'], 'post_id': post['id']})
+        return audios
+    return []
+
+
+def pars_post_id_from_post_url(post_url):
+    if 'wall' not in post_url:
+        if '_' in post_url:
+            owner_id, post_id = post_url.split('-')
+            try:
+                owner_id, post_url = int(owner_id), int(post_id)
+                return f'{owner_id}_{post_id}'
+            except TypeError:
+                return None
+    else:
+        return post_url.split('wall')[-1]
